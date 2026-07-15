@@ -57,6 +57,8 @@ def __getattr__(name):
         return config_yaml['pytorchsim_functional_mode']
     if name == "pytorchsim_timing_mode":
         return config_yaml['pytorchsim_timing_mode']
+    if name == "npuwattch_estimation_mode":
+        return config_yaml['npuwattch_estimation_mode']
     # Sub-option of functional mode: compare every realized Spike buffer against a CPU
     # golden to localize the first kernel whose value diverges. Auto-disabled when
     # functional mode is off (there are no Spike values to verify).

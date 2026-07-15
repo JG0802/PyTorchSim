@@ -21,6 +21,44 @@ from PyTorchSimFrontend import extension_config
 logger = extension_config.setup_logger()
 from tqdm import tqdm
 
+_activity_lock = threading.Lock()
+_activity_state = {"path": None}
+
+
+def _dump_activity(tog_path):
+    if not extension_config.npuwattch_estimation_mode:
+        return
+
+    kernel_dir = os.path.dirname(str(tog_path))
+    stats_path = os.path.join(kernel_dir, "m5out", "stats.txt")
+    if not os.path.isfile(stats_path):
+        return
+    meta_path = os.path.join(kernel_dir, "meta.txt")
+    dtype = "unknown"
+    if os.path.isfile(meta_path):
+        found = re.findall(r"torch\.((?!Size)[a-z0-9]+)", open(meta_path).read())
+        if found:
+            dtype = ",".join(sorted(set(found)))
+    with open(stats_path) as f:
+        stats = f.read().rstrip("\n")
+    with _activity_lock:
+        if _activity_state["path"] is None:
+            dump_path = extension_config.get_dump_path()
+            default_log_dir = os.path.join(dump_path, ".npuwattch")
+            os.makedirs(default_log_dir, exist_ok=True)
+            default_log_path = os.path.join(default_log_dir, "activity_log.txt")
+            _activity_state["path"] = os.environ.get(
+                "NPUWATTCH_ACTIVITY_LOG",
+                default_log_path)
+            with open(_activity_state["path"], "w") as f:
+                f.write("========== PyTorchSim -> NPUWattch Activity Log ==========\n\n")
+        with open(_activity_state["path"], "a") as f:
+            f.write("===== Start Kernel =====\n")
+            f.write(f"kernel_dtype: {dtype}\n")
+            f.write(f"kernel_dir: {os.path.basename(kernel_dir)}\n")
+            f.write(stats + "\n")
+            f.write("===== End Kernel =====\n\n")
+
 
 class ProgressBar:
     def __init__(self, desc, silent_mode=False, update_interval=0.5):
@@ -348,6 +386,8 @@ class TOGSimulator():
                 self._trace_file_handle.flush()
                 self.trace_log += command + '\n'
                 logger.debug(f"[TOGSim] Sent command: {command}")
+                if command_type == "LAUNCH_KERNEL" and tog_path:
+                    _dump_activity(tog_path)
             except IOError as e:
                 logger.error(f"[TOGSim] Failed to write to trace file: {e}")
                 raise RuntimeError(f"Failed to send command to TOGSim: {e}")
@@ -562,6 +602,9 @@ class TOGSimulator():
             trace_file.write(command)
             trace_file.flush()
             os.fsync(trace_file.fileno())
+
+        if not autotune_mode:
+            _dump_activity(model_path)
 
         try:
             # Drive the simulation from the emitted trace.so (the C++ TOG path). The
